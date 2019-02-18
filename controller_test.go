@@ -17,12 +17,11 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
 
-	apps "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -33,9 +32,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 
-	samplecontroller "k8s.io/sample-controller/pkg/apis/samplecontroller/v1alpha1"
-	"k8s.io/sample-controller/pkg/generated/clientset/versioned/fake"
-	informers "k8s.io/sample-controller/pkg/generated/informers/externalversions"
+	exampleoperator "github.com/flugel-it/exampleoperator/pkg/apis/exampleoperator/v1alpha1"
+	"github.com/flugel-it/exampleoperator/pkg/generated/clientset/versioned/fake"
+	informers "github.com/flugel-it/exampleoperator/pkg/generated/informers/externalversions"
 )
 
 var (
@@ -49,8 +48,8 @@ type fixture struct {
 	client     *fake.Clientset
 	kubeclient *k8sfake.Clientset
 	// Objects to put in the store.
-	fooLister        []*samplecontroller.Foo
-	deploymentLister []*apps.Deployment
+	immortalcontainerLister []*exampleoperator.ImmortalContainer
+	podLister               []*corev1.Pod
 	// Actions expected to happen on the client.
 	kubeactions []core.Action
 	actions     []core.Action
@@ -67,16 +66,15 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
-func newFoo(name string, replicas *int32) *samplecontroller.Foo {
-	return &samplecontroller.Foo{
-		TypeMeta: metav1.TypeMeta{APIVersion: samplecontroller.SchemeGroupVersion.String()},
+func newImmortalContainer(name string, image string) *exampleoperator.ImmortalContainer {
+	return &exampleoperator.ImmortalContainer{
+		TypeMeta: metav1.TypeMeta{APIVersion: exampleoperator.SchemeGroupVersion.String()},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: metav1.NamespaceDefault,
 		},
-		Spec: samplecontroller.FooSpec{
-			DeploymentName: fmt.Sprintf("%s-deployment", name),
-			Replicas:       replicas,
+		Spec: exampleoperator.ImmortalContainerSpec{
+			Image: image,
 		},
 	}
 }
@@ -85,36 +83,47 @@ func (f *fixture) newController() (*Controller, informers.SharedInformerFactory,
 	f.client = fake.NewSimpleClientset(f.objects...)
 	f.kubeclient = k8sfake.NewSimpleClientset(f.kubeobjects...)
 
+	// Fake pod name generation
+	f.kubeclient.PrependReactor("create", "pods", func(action core.Action) (bool, runtime.Object, error) {
+		createAction := action.(core.CreateAction)
+		pod := createAction.GetObject().(*corev1.Pod)
+		podCopy := pod.DeepCopy()
+		if podCopy.ObjectMeta.GenerateName != "" && podCopy.ObjectMeta.Name == "" {
+			podCopy.Name = pod.ObjectMeta.GenerateName + "XXX"
+		}
+		return true, podCopy, nil
+	})
+
 	i := informers.NewSharedInformerFactory(f.client, noResyncPeriodFunc())
 	k8sI := kubeinformers.NewSharedInformerFactory(f.kubeclient, noResyncPeriodFunc())
 
 	c := NewController(f.kubeclient, f.client,
-		k8sI.Apps().V1().Deployments(), i.Samplecontroller().V1alpha1().Foos())
+		k8sI.Core().V1().Pods(), i.Exampleoperator().V1alpha1().ImmortalContainers())
 
-	c.foosSynced = alwaysReady
-	c.deploymentsSynced = alwaysReady
+	c.immortalContainersSynced = alwaysReady
+	c.podsSynced = alwaysReady
 	c.recorder = &record.FakeRecorder{}
 
-	for _, f := range f.fooLister {
-		i.Samplecontroller().V1alpha1().Foos().Informer().GetIndexer().Add(f)
+	for _, f := range f.immortalcontainerLister {
+		i.Exampleoperator().V1alpha1().ImmortalContainers().Informer().GetIndexer().Add(f)
 	}
 
-	for _, d := range f.deploymentLister {
-		k8sI.Apps().V1().Deployments().Informer().GetIndexer().Add(d)
+	for _, d := range f.podLister {
+		k8sI.Core().V1().Pods().Informer().GetIndexer().Add(d)
 	}
 
 	return c, i, k8sI
 }
 
-func (f *fixture) run(fooName string) {
-	f.runController(fooName, true, false)
+func (f *fixture) run(immortalcontainerName string) {
+	f.runController(immortalcontainerName, true, false)
 }
 
-func (f *fixture) runExpectError(fooName string) {
-	f.runController(fooName, true, true)
+func (f *fixture) runExpectError(immortalcontainerName string) {
+	f.runController(immortalcontainerName, true, true)
 }
 
-func (f *fixture) runController(fooName string, startInformers bool, expectError bool) {
+func (f *fixture) runController(immortalcontainerName string, startInformers bool, expectError bool) {
 	c, i, k8sI := f.newController()
 	if startInformers {
 		stopCh := make(chan struct{})
@@ -123,11 +132,11 @@ func (f *fixture) runController(fooName string, startInformers bool, expectError
 		k8sI.Start(stopCh)
 	}
 
-	err := c.syncHandler(fooName)
+	err := c.syncHandler(immortalcontainerName)
 	if !expectError && err != nil {
-		f.t.Errorf("error syncing foo: %v", err)
+		f.t.Errorf("error syncing immortalcontainer: %v", err)
 	} else if expectError && err == nil {
-		f.t.Error("expected error syncing foo, got nil")
+		f.t.Error("expected error syncing immortalcontainer, got nil")
 	}
 
 	actions := filterInformerActions(f.client.Actions())
@@ -212,10 +221,10 @@ func filterInformerActions(actions []core.Action) []core.Action {
 	ret := []core.Action{}
 	for _, action := range actions {
 		if len(action.GetNamespace()) == 0 &&
-			(action.Matches("list", "foos") ||
-				action.Matches("watch", "foos") ||
-				action.Matches("list", "deployments") ||
-				action.Matches("watch", "deployments")) {
+			(action.Matches("list", "immortalcontainers") ||
+				action.Matches("watch", "immortalcontainers") ||
+				action.Matches("list", "pods") ||
+				action.Matches("watch", "pods")) {
 			continue
 		}
 		ret = append(ret, action)
@@ -224,90 +233,92 @@ func filterInformerActions(actions []core.Action) []core.Action {
 	return ret
 }
 
-func (f *fixture) expectCreateDeploymentAction(d *apps.Deployment) {
-	f.kubeactions = append(f.kubeactions, core.NewCreateAction(schema.GroupVersionResource{Resource: "deployments"}, d.Namespace, d))
+func (f *fixture) expectCreatePodAction(d *corev1.Pod) {
+	f.kubeactions = append(f.kubeactions, core.NewCreateAction(schema.GroupVersionResource{Resource: "pods"}, d.Namespace, d))
 }
 
-func (f *fixture) expectUpdateDeploymentAction(d *apps.Deployment) {
-	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{Resource: "deployments"}, d.Namespace, d))
+func (f *fixture) expectUpdatePodAction(d *corev1.Pod) {
+	f.kubeactions = append(f.kubeactions, core.NewUpdateAction(schema.GroupVersionResource{Resource: "pods"}, d.Namespace, d))
 }
 
-func (f *fixture) expectUpdateFooStatusAction(foo *samplecontroller.Foo) {
-	action := core.NewUpdateAction(schema.GroupVersionResource{Resource: "foos"}, foo.Namespace, foo)
+func (f *fixture) expectUpdateImmortalContainerStatusAction(immortalcontainer *exampleoperator.ImmortalContainer) {
+	action := core.NewUpdateAction(schema.GroupVersionResource{Resource: "immortalcontainers"}, immortalcontainer.Namespace, immortalcontainer)
 	// TODO: Until #38113 is merged, we can't use Subresource
 	//action.Subresource = "status"
 	f.actions = append(f.actions, action)
 }
 
-func getKey(foo *samplecontroller.Foo, t *testing.T) string {
-	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(foo)
+func getKey(immortalcontainer *exampleoperator.ImmortalContainer, t *testing.T) string {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(immortalcontainer)
 	if err != nil {
-		t.Errorf("Unexpected error getting key for foo %v: %v", foo.Name, err)
+		t.Errorf("Unexpected error getting key for immortalcontainer %v: %v", immortalcontainer.Name, err)
 		return ""
 	}
 	return key
 }
 
-func TestCreatesDeployment(t *testing.T) {
+func TestCreatesPod(t *testing.T) {
 	f := newFixture(t)
-	foo := newFoo("test", int32Ptr(1))
+	immortalcontainer := newImmortalContainer("test", "nginx:latest")
 
-	f.fooLister = append(f.fooLister, foo)
-	f.objects = append(f.objects, foo)
+	f.immortalcontainerLister = append(f.immortalcontainerLister, immortalcontainer)
+	f.objects = append(f.objects, immortalcontainer)
 
-	expDeployment := newDeployment(foo)
-	f.expectCreateDeploymentAction(expDeployment)
-	f.expectUpdateFooStatusAction(foo)
+	expPod := newPod(immortalcontainer)
+	f.expectCreatePodAction(expPod)
 
-	f.run(getKey(foo, t))
+	expectedImmortalcontainer := immortalcontainer.DeepCopy()
+	expectedImmortalcontainer.Status.CurrentPod = expPod.ObjectMeta.GenerateName + "XXX"
+
+	f.expectUpdateImmortalContainerStatusAction(expectedImmortalcontainer)
+	f.run(getKey(immortalcontainer, t))
 }
 
 func TestDoNothing(t *testing.T) {
 	f := newFixture(t)
-	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	immortalcontainer := newImmortalContainer("test", "nginx:latest")
+	pod := newPod(immortalcontainer)
+	pod.Name = "immortalcontainer-pod"
+	immortalcontainer.Status.CurrentPod = pod.Name
 
-	f.fooLister = append(f.fooLister, foo)
-	f.objects = append(f.objects, foo)
-	f.deploymentLister = append(f.deploymentLister, d)
-	f.kubeobjects = append(f.kubeobjects, d)
+	f.immortalcontainerLister = append(f.immortalcontainerLister, immortalcontainer)
+	f.objects = append(f.objects, immortalcontainer)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
 
-	f.expectUpdateFooStatusAction(foo)
-	f.run(getKey(foo, t))
+	f.run(getKey(immortalcontainer, t))
 }
 
-func TestUpdateDeployment(t *testing.T) {
+func TestRecreatePodIfNotFound(t *testing.T) {
 	f := newFixture(t)
-	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	immortalcontainer := newImmortalContainer("test", "nginx:latest")
+	immortalcontainer.Status.CurrentPod = "immortalcontainer-pod"
+	f.immortalcontainerLister = append(f.immortalcontainerLister, immortalcontainer)
+	f.objects = append(f.objects, immortalcontainer)
 
-	// Update replicas
-	foo.Spec.Replicas = int32Ptr(2)
-	expDeployment := newDeployment(foo)
+	expPod := newPod(immortalcontainer)
+	f.expectCreatePodAction(expPod)
 
-	f.fooLister = append(f.fooLister, foo)
-	f.objects = append(f.objects, foo)
-	f.deploymentLister = append(f.deploymentLister, d)
-	f.kubeobjects = append(f.kubeobjects, d)
+	expectedImmortalcontainer := immortalcontainer.DeepCopy()
+	expectedImmortalcontainer.Status.CurrentPod = expPod.ObjectMeta.GenerateName + "XXX"
 
-	f.expectUpdateFooStatusAction(foo)
-	f.expectUpdateDeploymentAction(expDeployment)
-	f.run(getKey(foo, t))
+	f.expectUpdateImmortalContainerStatusAction(expectedImmortalcontainer)
+	f.run(getKey(immortalcontainer, t))
 }
 
 func TestNotControlledByUs(t *testing.T) {
 	f := newFixture(t)
-	foo := newFoo("test", int32Ptr(1))
-	d := newDeployment(foo)
+	immortalcontainer := newImmortalContainer("test", "nginx-latest")
+	pod := newPod(immortalcontainer)
+	pod.Name = "immortalcontainer-XXX"
+	immortalcontainer.Status.CurrentPod = pod.Name
 
-	d.ObjectMeta.OwnerReferences = []metav1.OwnerReference{}
+	pod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{}
 
-	f.fooLister = append(f.fooLister, foo)
-	f.objects = append(f.objects, foo)
-	f.deploymentLister = append(f.deploymentLister, d)
-	f.kubeobjects = append(f.kubeobjects, d)
+	f.immortalcontainerLister = append(f.immortalcontainerLister, immortalcontainer)
+	f.objects = append(f.objects, immortalcontainer)
+	f.podLister = append(f.podLister, pod)
+	f.kubeobjects = append(f.kubeobjects, pod)
 
-	f.runExpectError(getKey(foo, t))
+	f.runExpectError(getKey(immortalcontainer, t))
 }
-
-func int32Ptr(i int32) *int32 { return &i }
