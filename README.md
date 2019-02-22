@@ -7,7 +7,7 @@ terminated must be restarted.
 ## Building
 
 ```bash
-$ git clone git@github.com:miguelgarcia/k8s-example-operator.git $GOPATH/src/github.com/flugel-it/exampleoperator
+$ git clone git@github.com:flugel-it/exampleoperator.git $GOPATH/src/github.com/flugel-it/exampleoperator
 
 $ make
 ```
