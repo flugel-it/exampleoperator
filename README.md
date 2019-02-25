@@ -72,7 +72,6 @@ kind: ImmortalContainer
 metadata:
   name: example-immortal-container
 spec:
-  containerName: my-container
   image: nginx:latest
 ```
 
