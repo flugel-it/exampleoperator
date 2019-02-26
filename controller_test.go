@@ -268,7 +268,7 @@ func TestCreatesPod(t *testing.T) {
 	f.expectCreatePodAction(expPod)
 
 	expectedImmortalcontainer := immortalcontainer.DeepCopy()
-	expectedImmortalcontainer.Status.CurrentPod = expPod.ObjectMeta.GenerateName + "XXX"
+	expectedImmortalcontainer.Status.CurrentPod = expPod.Name
 
 	f.expectUpdateImmortalContainerStatusAction(expectedImmortalcontainer)
 	f.run(getKey(immortalcontainer, t))
@@ -278,7 +278,6 @@ func TestDoNothing(t *testing.T) {
 	f := newFixture(t)
 	immortalcontainer := newImmortalContainer("test", "nginx:latest")
 	pod := newPod(immortalcontainer)
-	pod.Name = "immortalcontainer-pod"
 	immortalcontainer.Status.CurrentPod = pod.Name
 
 	f.immortalcontainerLister = append(f.immortalcontainerLister, immortalcontainer)
@@ -300,7 +299,7 @@ func TestRecreatePodIfNotFound(t *testing.T) {
 	f.expectCreatePodAction(expPod)
 
 	expectedImmortalcontainer := immortalcontainer.DeepCopy()
-	expectedImmortalcontainer.Status.CurrentPod = expPod.ObjectMeta.GenerateName + "XXX"
+	expectedImmortalcontainer.Status.CurrentPod = expPod.Name
 
 	f.expectUpdateImmortalContainerStatusAction(expectedImmortalcontainer)
 	f.run(getKey(immortalcontainer, t))
@@ -310,7 +309,6 @@ func TestNotControlledByUs(t *testing.T) {
 	f := newFixture(t)
 	immortalcontainer := newImmortalContainer("test", "nginx-latest")
 	pod := newPod(immortalcontainer)
-	pod.Name = "immortalcontainer-XXX"
 	immortalcontainer.Status.CurrentPod = pod.Name
 
 	pod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{}

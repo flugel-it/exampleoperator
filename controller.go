@@ -397,8 +397,8 @@ func newPod(immortalContainer *examplev1alpha1.ImmortalContainer) *corev1.Pod {
 					Kind:    "ImmortalContainer",
 				}),
 			},
-			Labels:       labels,
-			GenerateName: "immortalpod-",
+			Labels: labels,
+			Name:   immortalContainer.Name + "-immortalpod",
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
